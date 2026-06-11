@@ -1,0 +1,306 @@
+<div id="cnv" style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:1rem 0;">
+  <div id="p5holder"></div>
+  <p id="voice-hint" style="font-family:var(--font-sans,sans-serif);font-size:13px;color:var(--color-text-secondary);letter-spacing:0.04em;">
+    clic para activar micrófono
+  </p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.3/p5.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.3/addons/p5.sound.min.js"></script>
+<script>
+new p5(function(p) {
+
+ 
+  let palette = [];
+  const N = 55;
+  let waveRing  = -1;
+  let waveMax   = N + 14;
+  let animating = false;
+  let waveSpeed = 1.4;
+  let waveColor;
+
+  let spinAngle = 0;
+
+  
+  let mic;
+  let audioIniciado = false;
+
+  const AMP_MIN                 = 0.0;
+  const AMP_MAX                 = 0.15;
+  const UMBRAL_RUIDO            = 0.08;
+  const UMBRAL_DURACION_SONIDO  = 600;
+
+  let gestorAmp;
+  let peakAmp = 0;
+
+  let haySonido         = false;
+  let antesHabiaSonido  = false;
+  let empezoElSonido    = false;
+  let terminoElSonido   = false;
+  let ultimoSonidoLargo = false;
+
+  let marcaInicioSonido = 0;
+  let marcaFinSonido    = 0;
+  let durSonido         = 0;
+
+  
+  class GestorSenial {
+    constructor(minimo, maximo) {
+      this.minimo   = minimo;
+      this.maximo   = maximo;
+      this.filtrada = 0;
+      this.anterior = 0;
+      this.derivada = 0;
+      this.f        = 0.80;
+    }
+    actualizar(entrada) {
+      let mapeada   = p.constrain(p.map(entrada, this.minimo, this.maximo, 0, 1), 0, 1);
+      this.filtrada = this.filtrada * this.f + mapeada * (1 - this.f);
+      this.derivada = (this.filtrada - this.anterior) * 15;
+      this.anterior = this.filtrada;
+    }
+  }
+
+  
+  function buildPalette() {
+    let pal = [];
+    
+    // Paleta de colores curados basándonos en tus referencias (Desaturados, pictóricos)
+    // Valores en HSB
+    const baseColors = [
+      p.color(185, 45, 55), 
+      p.color(210, 30, 70), 
+      p.color(42, 12, 92),  
+      p.color(38, 40, 85),  
+      p.color(275, 20, 65), 
+      p.color(195, 20, 90), 
+      p.color(12, 45, 80),  
+      p.color(45, 5, 96),   
+      p.color(160, 25, 60), 
+      p.color(345, 35, 65), 
+      p.color(225, 35, 50)  
+    ];
+
+    let keyFrames = [];
+    let currentRing = 0;
+
+    
+    keyFrames.push({ index: 0, col: p.random(baseColors) });
+
+    
+    while (currentRing < N) {
+      let step = p.floor(p.random(4, 7)); 
+      currentRing += step;
+      if (currentRing > N) currentRing = N;
+
+      
+      let nextCol = p.random(baseColors);
+      keyFrames.push({ index: currentRing, col: nextCol });
+    }
+
+    
+    for (let i = 0; i <= N; i++) {
+      // Ubicar entre qué keyframes estamos
+      let k1 = keyFrames[0];
+      let k2 = keyFrames[1];
+      for(let j = 0; j < keyFrames.length - 1; j++) {
+        if (i >= keyFrames[j].index && i <= keyFrames[j+1].index) {
+          k1 = keyFrames[j];
+          k2 = keyFrames[j+1];
+          break;
+        }
+      }
+
+      let range = k2.index - k1.index;
+      let t = (range === 0) ? 0 : (i - k1.index) / range;
+
+      
+      let easedT = t * t * (3 - 2 * t);
+      easedT = easedT * easedT * (3 - 2 * easedT); 
+
+      let baseC = p.lerpColor(k1.col, k2.col, easedT);
+
+      
+      let h = p.hue(baseC);
+      let s = p.saturation(baseC);
+      let b = p.brightness(baseC);
+
+      
+      b = p.constrain(b + p.sin(i * 1.2) * 2.5, 0, 100);
+      s = p.constrain(s + p.cos(i * 0.8) * 2.5, 0, 100);
+
+      pal.push(p.color(h, s, b));
+    }
+    return pal;
+  }
+
+  function setHint(txt) {
+    const el = document.getElementById('voice-hint');
+    if (el) el.textContent = txt;
+  }
+
+  
+  p.setup = function() {
+    let s   = Math.min(window.innerWidth - 32, 580);
+    let cnv = p.createCanvas(s, s);
+    cnv.parent('p5holder');
+    p.colorMode(p.HSB, 360, 100, 100);
+    p.noLoop();
+
+    palette   = buildPalette();
+    gestorAmp = new GestorSenial(AMP_MIN, AMP_MAX);
+    p.redraw();
+  };
+
+  
+  p.draw = function() {
+    // MODIFICADO: Fondo crema cálido en lugar de negro para empatar con la pintura
+    p.background(40, 8, 94);
+
+    const cx    = p.width  / 2;
+    const cy    = p.height / 2;
+    const maxR  = p.width  * 0.49;
+    const centR = Math.max(3, p.width * 0.008);
+    const rW    = (maxR - centR) / N;
+
+    p.noFill();
+    p.strokeCap(p.SQUARE);
+
+    for (let i = N - 1; i >= 0; i--) {
+      let r = centR + (i + 0.5) * rW;
+      p.strokeWeight(rW + 0.5);
+
+      // anillos interiores giran más que los exteriores
+      let depthFactor = p.map(i, 0, N - 1, 1.0, 0.05);
+      let ao = spinAngle * depthFactor;
+
+      let c1 = palette[i];
+      let c2 = palette[i + 1] ? palette[i + 1] : palette[i]; // Prevención de borde
+
+      if (animating) {
+        let dist = waveRing - i;
+        if (dist >= 0 && dist < 6) {
+          let blend = p.constrain(1 - dist / 6, 0, 1);
+          c1 = p.lerpColor(palette[i],     waveColor, blend);
+          c2 = p.lerpColor(palette[i + 1] ? palette[i + 1] : palette[i], waveColor, blend);
+        } else if (dist >= 6 && dist < 14) {
+          let recovery = p.constrain((dist - 6) / 8, 0, 1);
+          c1 = p.lerpColor(waveColor, palette[i],     recovery);
+          c2 = p.lerpColor(waveColor, palette[i + 1] ? palette[i+1] : palette[i], recovery);
+        }
+      }
+
+      p.stroke(c1);
+      p.arc(cx, cy, r*2, r*2, -p.QUARTER_PI + ao,       p.QUARTER_PI + ao);
+      p.arc(cx, cy, r*2, r*2,  3*p.QUARTER_PI + ao, 5*p.QUARTER_PI + ao);
+      p.stroke(c2);
+      p.arc(cx, cy, r*2, r*2,  p.QUARTER_PI + ao,  3*p.QUARTER_PI + ao);
+      p.arc(cx, cy, r*2, r*2,  p.PI + p.QUARTER_PI + ao, p.TWO_PI - p.QUARTER_PI + ao);
+    }
+
+    p.noStroke();
+    p.fill(palette[0]);
+    p.circle(cx, cy, centR * 2);
+
+    
+    if (audioIniciado) {
+      let amp = mic.getLevel();
+      gestorAmp.actualizar(amp);
+
+      haySonido       = gestorAmp.filtrada > UMBRAL_RUIDO;
+      empezoElSonido  = haySonido && !antesHabiaSonido;
+      terminoElSonido = !haySonido && antesHabiaSonido;
+
+      if (empezoElSonido && !animating) {
+        peakAmp           = 0;
+        waveColor         = palette[0];
+        waveRing          = 0;
+        animating         = true;
+        marcaInicioSonido = p.millis();
+      }
+
+      if (haySonido) {
+        durSonido = p.millis() - marcaInicioSonido;
+        peakAmp   = Math.max(peakAmp, gestorAmp.filtrada);
+
+        // velocidad y alcance se actualizan frame a frame según amplitud actual
+        waveSpeed = p.map(gestorAmp.filtrada, 0, 1, 0.3, 4.5, true);
+        waveMax   = p.map(peakAmp,            0, 1, N * 0.25, N + 14, true);
+      }
+
+      if (terminoElSonido) {
+        marcaFinSonido    = p.millis();
+        durSonido         = marcaFinSonido - marcaInicioSonido;
+        ultimoSonidoLargo = durSonido >= UMBRAL_DURACION_SONIDO;
+
+        // Congela el alcance al pico capturado durante el sonido
+        waveMax = p.map(peakAmp, 0, 1, N * 0.25, N + 14, true);
+
+        // Sonido largo → nueva paleta
+        if (ultimoSonidoLargo) palette = buildPalette();
+      }
+
+      // Desacelera suavemente cuando el sonido paró
+      if (!haySonido && animating) {
+        waveSpeed = Math.max(0.15, waveSpeed * 0.92);
+      }
+
+      antesHabiaSonido = haySonido;
+
+      
+      if (haySonido && animating) {
+        let spd = p.map(gestorAmp.filtrada, 0, 1, 0.04, 0.22, true);
+        spinAngle += spd;
+      } else {
+        spinAngle *= 0.96;
+        if (spinAngle < 0.0001) spinAngle = 0;
+      }
+    }
+
+    
+    if (animating) {
+      waveRing += waveSpeed;
+      if (waveRing > waveMax) {
+        animating = false;
+        waveRing  = -1;
+        waveMax   = N + 14;
+      }
+    }
+  };
+
+  
+  p.mousePressed = function() {
+    if (audioIniciado) return;
+    iniciarAudio();
+  };
+
+  async function iniciarAudio() {
+    try {
+      if (typeof p.userStartAudio === 'function') {
+        await p.userStartAudio();
+      } else {
+        await getAudioContext().resume();
+      }
+      mic = new p5.AudioIn();
+      mic.start(
+        () => {
+          audioIniciado = true;
+          p.loop();
+          setHint('sonido corto → onda · sonido largo → nueva paleta');
+        },
+        (err) => console.error('No se pudo iniciar el micrófono:', err)
+      );
+    } catch (e) {
+      console.error('No se pudo habilitar el contexto de audio:', e);
+    }
+  }
+
+  
+  p.windowResized = function() {
+    let s = Math.min(window.innerWidth - 32, 580);
+    p.resizeCanvas(s, s);
+    p.redraw();
+  };
+
+}, document.getElementById('p5holder'));
+</script>>
