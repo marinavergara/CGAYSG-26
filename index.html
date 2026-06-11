@@ -10,7 +10,7 @@
 <script>
 new p5(function(p) {
 
- 
+  // ─── PALETA Y VISUALIZACIÓN ───────────────────────────────────────────────
   let palette = [];
   const N = 55;
   let waveRing  = -1;
@@ -19,9 +19,10 @@ new p5(function(p) {
   let waveSpeed = 1.4;
   let waveColor;
 
+  // ─── SPIN ─────────────────────────────────────────────────────────────────
   let spinAngle = 0;
 
-  
+  // ─── AUDIO ────────────────────────────────────────────────────────────────
   let mic;
   let audioIniciado = false;
 
@@ -43,7 +44,7 @@ new p5(function(p) {
   let marcaFinSonido    = 0;
   let durSonido         = 0;
 
-  
+  // ─── GestorSenial (de clase_05_21) ────────────────────────────────────────
   class GestorSenial {
     constructor(minimo, maximo) {
       this.minimo   = minimo;
@@ -61,48 +62,69 @@ new p5(function(p) {
     }
   }
 
-  
+  // ─── LÓGICA DE COLOR MODIFICADA ───────────────────────────────────────────
   function buildPalette() {
     let pal = [];
     
-    // Paleta de colores curados basándonos en tus referencias (Desaturados, pictóricos)
-    // Valores en HSB
+    // Todos los tonos extraídos de las obras de referencia
     const baseColors = [
-      p.color(185, 45, 55), 
-      p.color(210, 30, 70), 
-      p.color(42, 12, 92),  
-      p.color(38, 40, 85),  
-      p.color(275, 20, 65), 
-      p.color(195, 20, 90), 
-      p.color(12, 45, 80),  
-      p.color(45, 5, 96),   
-      p.color(160, 25, 60), 
-      p.color(345, 35, 65), 
-      p.color(225, 35, 50)  
+      p.color(40, 55, 85),  // Dorado suave / Mostaza apagado
+      p.color(15, 50, 75),  // Terracota / Coral oscuro
+      p.color(180, 55, 60), // Turquesa petróleo
+      p.color(170, 45, 75), // Celeste verdoso apagado
+      p.color(45, 12, 92),  // Crema cálido (respiro)
+      p.color(165, 45, 55), // Verde esmeralda desaturado oscuro
+      p.color(215, 50, 45), // Azul humo oscuro / Marino
+      p.color(200, 15, 85), // Azul grisáceo muy claro
+      p.color(210, 10, 95), // Blanco lechoso frío
+      p.color(350, 65, 55), // Rojo carmín / Borgoña
+      p.color(210, 65, 80), // Azul océano
+      p.color(195, 45, 85), // Celeste intenso pero suave
+      p.color(130, 40, 75), // Verde medio suavizado
+      p.color(45, 8, 95),   // Blanco cálido
+      p.color(25, 75, 85),  // Naranja cálido
+      p.color(5, 70, 80),   // Rojo anaranjado apagado
+      p.color(280, 20, 65), // Violeta grisáceo
+      p.color(10, 40, 80),  // Coral claro apagado
+      p.color(205, 25, 85), // Celeste lechoso
+      p.color(215, 35, 65), // Azul humo medio
+      p.color(40, 20, 88)   // Dorado suave / Crema oscuro
     ];
 
     let keyFrames = [];
     let currentRing = 0;
 
-    
-    keyFrames.push({ index: 0, col: p.random(baseColors) });
+    // Mezclamos la paleta base para que cada sonido largo genere una composición distinta
+    let shuffled = p.shuffle(baseColors.slice());
 
-    
+    // Función para variar sutilmente el color sin romper la armonía ni llegar a neón/pastel extremo
+    function varyColor(col) {
+      let h = (p.hue(col) + p.random(-8, 8) + 360) % 360;
+      let s = p.constrain(p.saturation(col) + p.random(-8, 8), 15, 75); // Límite de saturación
+      let b = p.constrain(p.brightness(col) + p.random(-5, 5), 40, 95); // Límite de brillo
+      return p.color(h, s, b);
+    }
+
+    // Asignamos el primer keyframe
+    keyFrames.push({ index: 0, col: varyColor(shuffled[0]) });
+
+    let colorIndex = 1;
+    // Dividimos los N anillos en bandas de 4 a 6 anillos
     while (currentRing < N) {
       let step = p.floor(p.random(4, 7)); 
       currentRing += step;
       if (currentRing > N) currentRing = N;
 
-      
-      let nextCol = p.random(baseColors);
+      let nextCol = varyColor(shuffled[colorIndex % shuffled.length]);
       keyFrames.push({ index: currentRing, col: nextCol });
+      colorIndex++;
     }
 
-    
+    // Rellenamos e interpolamos
     for (let i = 0; i <= N; i++) {
-      // Ubicar entre qué keyframes estamos
       let k1 = keyFrames[0];
       let k2 = keyFrames[1];
+      
       for(let j = 0; j < keyFrames.length - 1; j++) {
         if (i >= keyFrames[j].index && i <= keyFrames[j+1].index) {
           k1 = keyFrames[j];
@@ -114,20 +136,20 @@ new p5(function(p) {
       let range = k2.index - k1.index;
       let t = (range === 0) ? 0 : (i - k1.index) / range;
 
-      
+      // Double smoothstep: aplana la curva en el medio de la banda (bloque de color) 
+      // y suaviza la transición en los bordes.
       let easedT = t * t * (3 - 2 * t);
       easedT = easedT * easedT * (3 - 2 * easedT); 
 
       let baseC = p.lerpColor(k1.col, k2.col, easedT);
 
-      
+      // Microdegradado: levísima variación usando ondas para dar textura de pintura
       let h = p.hue(baseC);
       let s = p.saturation(baseC);
       let b = p.brightness(baseC);
 
-      
-      b = p.constrain(b + p.sin(i * 1.2) * 2.5, 0, 100);
-      s = p.constrain(s + p.cos(i * 0.8) * 2.5, 0, 100);
+      b = p.constrain(b + p.sin(i * 1.5) * 2.5, 0, 100);
+      s = p.constrain(s + p.cos(i * 1.2) * 2.0, 0, 100);
 
       pal.push(p.color(h, s, b));
     }
@@ -139,7 +161,7 @@ new p5(function(p) {
     if (el) el.textContent = txt;
   }
 
-  
+  // ─── SETUP ────────────────────────────────────────────────────────────────
   p.setup = function() {
     let s   = Math.min(window.innerWidth - 32, 580);
     let cnv = p.createCanvas(s, s);
@@ -152,10 +174,10 @@ new p5(function(p) {
     p.redraw();
   };
 
-  
+  // ─── DRAW ─────────────────────────────────────────────────────────────────
   p.draw = function() {
-    // MODIFICADO: Fondo crema cálido en lugar de negro para empatar con la pintura
-    p.background(40, 8, 94);
+    // Fondo modificado: Blanco cálido / Gris crema claro
+    p.background(45, 8, 92);
 
     const cx    = p.width  / 2;
     const cy    = p.height / 2;
@@ -202,7 +224,7 @@ new p5(function(p) {
     p.fill(palette[0]);
     p.circle(cx, cy, centR * 2);
 
-    
+    // ── Análisis de audio ──────────────────────────────────────────────────
     if (audioIniciado) {
       let amp = mic.getLevel();
       gestorAmp.actualizar(amp);
@@ -247,7 +269,7 @@ new p5(function(p) {
 
       antesHabiaSonido = haySonido;
 
-      
+      // ── Spin: acumula con sonido, decae a 0 en silencio ───────────────
       if (haySonido && animating) {
         let spd = p.map(gestorAmp.filtrada, 0, 1, 0.04, 0.22, true);
         spinAngle += spd;
@@ -257,7 +279,7 @@ new p5(function(p) {
       }
     }
 
-    
+    // ── Avance de onda ────────────────────────────────────────────────────
     if (animating) {
       waveRing += waveSpeed;
       if (waveRing > waveMax) {
@@ -268,7 +290,7 @@ new p5(function(p) {
     }
   };
 
-  
+  // ─── ACTIVAR MICRÓFONO (único uso del click) ──────────────────────────────
   p.mousePressed = function() {
     if (audioIniciado) return;
     iniciarAudio();
@@ -295,7 +317,7 @@ new p5(function(p) {
     }
   }
 
-  
+  // ─── RESIZE ───────────────────────────────────────────────────────────────
   p.windowResized = function() {
     let s = Math.min(window.innerWidth - 32, 580);
     p.resizeCanvas(s, s);
@@ -303,4 +325,4 @@ new p5(function(p) {
   };
 
 }, document.getElementById('p5holder'));
-</script>>
+</script>
